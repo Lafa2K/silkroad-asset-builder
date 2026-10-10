@@ -798,8 +798,8 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("900x720")
-        self.minsize(820, 650)
+        self.geometry("900x840")
+        self.minsize(820, 760)
         self.configure(bg=BG)
 
         self.name_value = tk.StringVar()
