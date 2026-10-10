@@ -1,63 +1,66 @@
 # Silkroad Asset Builder
 
-Ferramenta simples em Python para tarefas comuns com assets do Silkroad Online.
+A lightweight Python tool for common Silkroad Online asset tasks.
 
-## Recursos
+## Features
 
-- extrair um ou vários pacotes `.pk2`;
-- converter PNG, JPG, BMP e DDS para `.ddj`;
-- transformar OBJ + textura em uma malha de efeito (`.bms` + `.ddj`);
-- montar um pacote customizado `.bsr/.bmt/.bms/.ddj`.
+- extract one or multiple `.pk2` archives;
+- convert PNG, JPG, BMP, and DDS textures to `.ddj`;
+- turn an OBJ and texture into an effect mesh (`.bms` + `.ddj`);
+- build a custom `.bsr/.bmt/.bms/.ddj` package.
 
-O extrator PK2 copia os arquivos em fluxo e atualiza somente o progresso. Ele não
-carrega pacotes inteiros na memória e não abre o Explorer durante o trabalho.
+The PK2 extractor streams files and updates only the progress display. It does
+not load entire archives into memory or open File Explorer while working.
 
-## Instalação
+## Installation
 
-Requer Python 3.10 ou superior.
+Requires Python 3.10 or newer.
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-## Uso
+## Usage
 
-Abra `Abrir Silkroad Asset Builder.cmd` ou execute:
+Open `Open Silkroad Asset Builder.cmd` or run:
 
 ```powershell
 python .\sro_asset_builder.py
 ```
 
-### Extrair PK2
+### Extract PK2
 
-1. Abra a aba **EXTRAIR PK2**.
-2. Clique em **Selecionar PK2** e escolha um ou vários pacotes.
-3. Escolha a pasta de destino.
-4. Mantenha **Criar uma pasta para cada PK2** marcado para gerar pastas como
-   `Data`, `Media` e `Particles` sem misturar os arquivos.
-5. Clique em **EXTRAIR PACOTES**.
+1. Open the **PK2 EXTRACTOR** tab.
+2. Click **Select PK2 files** and choose one or more archives.
+3. Choose the destination folder.
+4. Keep **Create one folder per PK2** enabled to generate folders such as
+   `Data`, `Media`, and `Particles` without mixing their contents.
+5. Click **EXTRACT ARCHIVES**.
 
-O leitor usa a chave padrão dos clientes Silkroad/vSRO. Pacotes protegidos com
-uma chave personalizada não são suportados por enquanto.
+The reader uses the standard Silkroad/vSRO client key. Archives protected with
+a custom key are not currently supported.
 
-### Texturas DDJ
+For safety, extraction stops if a client PK2 contains recognizable server
+executables or configuration files. Source PK2 files are always opened read-only.
 
-Na aba **TEXTURAS DDJ**, selecione arquivos individuais ou uma pasta inteira.
-O destino é opcional; se ficar vazio, os `.ddj` são salvos ao lado dos originais.
+### DDJ Textures
 
-### Efeito / Prop
+On the **DDJ TEXTURES** tab, select individual files or an entire folder. The
+destination is optional; when empty, `.ddj` files are saved beside the originals.
 
-A aba **EFEITO / PROP** recebe:
+### Effect / Prop
 
-- um modelo Wavefront OBJ;
-- uma textura PNG, DDS, JPG ou BMP;
-- a raiz extraída que contém `Data`, `Media` ou `Particles`.
+The **EFFECT / PROP** tab accepts:
 
-`PROP SKILL` grava a malha em `Particles/meshes` e a textura em
-`Particles/textures`. `CUSTOM PROP` cria o conjunto completo em
-`Data/res/custom/<nome>`.
+- a Wavefront OBJ model;
+- a PNG, DDS, JPG, or BMP texture;
+- an extracted root containing `Data`, `Media`, or `Particles`.
 
-## Observação
+`PROP SKILL` writes the mesh to `Particles/meshes` and the texture to
+`Particles/textures`. `CUSTOM PROP` creates the complete set under
+`Data/res/custom/<name>`.
 
-Faça backup antes de substituir arquivos de um cliente. A ferramenta apenas lê
-os pacotes PK2 durante a extração; ela não altera o arquivo original.
+## Note
+
+Back up files before replacing anything in a client. The extractor only reads
+PK2 archives and never modifies the original file.

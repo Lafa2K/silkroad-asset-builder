@@ -19,7 +19,7 @@ from PIL import Image
 
 try:
     from Crypto.Cipher import Blowfish
-except ImportError:  # A mensagem amigável aparece apenas ao usar a aba PK2.
+except ImportError:  # Show a friendly message only when the PK2 tab is used.
     Blowfish = None
 
 
@@ -54,12 +54,12 @@ class Pk2FileEntry:
 
 
 class Pk2Archive:
-    """Leitor somente-leitura para PK2 padrão do Silkroad."""
+    """Read-only reader for standard Silkroad PK2 archives."""
 
     def __init__(self, path: Path) -> None:
         if Blowfish is None:
             raise AssetError(
-                "A extração PK2 precisa de pycryptodome. Rode: pip install -r requirements.txt"
+                "PK2 extraction requires pycryptodome. Run: pip install -r requirements.txt"
             )
         self.path = path
         self._cipher = Blowfish.new(PK2_BLOWFISH_KEY, Blowfish.MODE_ECB)
@@ -79,12 +79,12 @@ class Pk2Archive:
     def _safe_part(name: str) -> str:
         name = name.strip().replace("/", "_").replace("\\", "_")
         if not name or name in {".", ".."}:
-            raise AssetError(f"Nome inválido dentro do PK2: {name!r}")
+            raise AssetError(f"Invalid name inside PK2: {name!r}")
         return name
 
     def _decrypt_block(self, encrypted: bytes) -> bytes:
-        # O leitor original do Silkroad interpreta cada metade de 32 bits em
-        # little-endian; bibliotecas Blowfish modernas usam big-endian.
+        # The original Silkroad reader treats each 32-bit half as little-endian,
+        # while modern Blowfish libraries use big-endian words.
         swapped = b"".join(
             encrypted[index : index + 4][::-1]
             + encrypted[index + 4 : index + 8][::-1]
@@ -100,16 +100,45 @@ class Pk2Archive:
     def entries(self) -> list[Pk2FileEntry]:
         archive_size = self.path.stat().st_size
         if archive_size < PK2_HEADER_SIZE + PK2_BLOCK_SIZE:
-            raise AssetError(f"PK2 inválido ou incompleto: {self.path.name}")
+            raise AssetError(f"Invalid or incomplete PK2: {self.path.name}")
 
         results: list[Pk2FileEntry] = []
         self._visited_blocks.clear()
         with self.path.open("rb") as stream:
             header = stream.read(PK2_HEADER_SIZE)
             if not header.startswith(b"JoyMax File Manager"):
-                raise AssetError(f"Cabeçalho PK2 não reconhecido: {self.path.name}")
+                raise AssetError(f"Unrecognized PK2 header: {self.path.name}")
             self._read_directory(stream, PK2_HEADER_SIZE, Path(), archive_size, results)
         return results
+
+    @staticmethod
+    def server_file_markers(entries: list[Pk2FileEntry]) -> list[str]:
+        """Detect server-side files that should never be inside a client PK2."""
+        exact_names = {
+            "agentserver.exe",
+            "downloadserver.exe",
+            "farmmanager.exe",
+            "gatewayserver.exe",
+            "globalmanager.exe",
+            "machinemanager.exe",
+            "sr_gameserver.exe",
+            "sr_shardmanager.exe",
+            "server.cfg",
+        }
+        server_folders = {
+            "certmodule",
+            "serverfiles",
+            "silkroadconfigeditor_v28",
+            "smc_independent",
+        }
+        matches = []
+        for entry in entries:
+            parts = tuple(part.casefold() for part in entry.relative_path.parts)
+            if entry.relative_path.name.casefold() in exact_names or any(
+                part in server_folders for part in parts
+            ):
+                matches.append(str(entry.relative_path))
+        return matches
 
     def _read_directory(
         self,
@@ -124,14 +153,14 @@ class Pk2Archive:
 
         while block_position:
             if block_position in self._visited_blocks:
-                raise AssetError(f"Cadeia circular detectada no PK2 em {block_position}")
+                raise AssetError(f"Circular PK2 chain detected at {block_position}")
             if block_position < PK2_HEADER_SIZE or block_position + PK2_BLOCK_SIZE > archive_size:
-                raise AssetError(f"Bloco PK2 fora do arquivo: {block_position}")
+                raise AssetError(f"PK2 block lies outside the archive: {block_position}")
             self._visited_blocks.add(block_position)
             stream.seek(block_position)
             encrypted = stream.read(PK2_BLOCK_SIZE)
             if len(encrypted) != PK2_BLOCK_SIZE:
-                raise AssetError(f"Bloco PK2 truncado em {block_position}")
+                raise AssetError(f"Truncated PK2 block at {block_position}")
             block = self._decrypt_block(encrypted)
 
             next_chain = 0
@@ -152,7 +181,7 @@ class Pk2Archive:
                 elif entry_type == 2:
                     part = self._safe_part(name)
                     if position + size > archive_size:
-                        raise AssetError(f"Arquivo fora do PK2: {parent / part}")
+                        raise AssetError(f"File lies outside the PK2: {parent / part}")
                     results.append(Pk2FileEntry(parent / part, position, size))
 
             block_position = next_chain
@@ -179,7 +208,7 @@ class Pk2Archive:
                 try:
                     target.relative_to(destination_root)
                 except ValueError as exc:
-                    raise AssetError(f"Caminho inseguro no PK2: {entry.relative_path}") from exc
+                    raise AssetError(f"Unsafe path inside PK2: {entry.relative_path}") from exc
 
                 target.parent.mkdir(parents=True, exist_ok=True)
                 source.seek(entry.position)
@@ -188,7 +217,7 @@ class Pk2Archive:
                     while remaining:
                         chunk = source.read(min(COPY_CHUNK_SIZE, remaining))
                         if not chunk:
-                            raise AssetError(f"Leitura interrompida: {entry.relative_path}")
+                            raise AssetError(f"Interrupted read: {entry.relative_path}")
                         output.write(chunk)
                         remaining -= len(chunk)
                         written_bytes += len(chunk)
@@ -288,7 +317,7 @@ def obj_index(raw: str, count: int) -> int:
     value = int(raw)
     index = value - 1 if value > 0 else count + value
     if not 0 <= index < count:
-        raise AssetError(f"indice OBJ fora do limite: {value}")
+        raise AssetError(f"OBJ index out of range: {value}")
     return index
 
 
@@ -352,10 +381,10 @@ def parse_obj(path: Path, scale: float, axis_mode: str) -> Mesh:
                 for index in range(1, len(polygon) - 1):
                     triangles.append([polygon[0], polygon[index], polygon[index + 1]])
         except (ValueError, IndexError) as exc:
-            raise AssetError(f"OBJ invalido na linha {line_number}: {exc}") from exc
+            raise AssetError(f"invalid OBJ on line {line_number}: {exc}") from exc
 
     if not source_positions or not triangles:
-        raise AssetError("o OBJ nao possui vertices e faces validas")
+        raise AssetError("the OBJ does not contain valid vertices and faces")
 
     positions: list[tuple[float, float, float]] = []
     normals: list[tuple[float, float, float]] = []
@@ -382,7 +411,7 @@ def parse_obj(path: Path, scale: float, axis_mode: str) -> Mesh:
 
     if len(positions) > 65535:
         raise AssetError(
-            f"a malha gerou {len(positions)} vertices; BMS usa indices de 16 bits (maximo 65535)"
+            f"the mesh generated {len(positions)} vertices; BMS uses 16-bit indices (maximum 65535)"
         )
     return Mesh(positions, normals, uvs, indices)
 
@@ -461,7 +490,7 @@ def build_bms(mesh: Mesh, name: str, material_name: str) -> bytes:
 
     if writer.position != unknown9_offset + 4:
         raise AssetError(
-            f"falha interna ao montar BMS: esperado {unknown9_offset + 4}, obtido {writer.position}"
+            f"internal BMS build failure: expected {unknown9_offset + 4}, got {writer.position}"
         )
     return bytes(writer.data)
 
@@ -570,13 +599,13 @@ def build_ddj(texture_path: Path) -> tuple[bytes, tuple[int, int] | None]:
     if texture_path.suffix.lower() == ".dds":
         dds = texture_path.read_bytes()
         if not dds.startswith(b"DDS "):
-            raise AssetError("o arquivo selecionado nao possui cabecalho DDS")
+            raise AssetError("the selected file does not have a DDS header")
         size = None
     else:
         try:
             image = Image.open(texture_path).convert("RGBA")
         except Exception as exc:
-            raise AssetError(f"nao foi possivel abrir a textura: {exc}") from exc
+            raise AssetError(f"could not open the texture: {exc}") from exc
         size = image.size
         from io import BytesIO
 
@@ -596,14 +625,14 @@ def validate_mesh_asset(bms: bytes, ddj: bytes) -> None:
     signatures = ((bms, b"JMXVBMS 0110"), (ddj, b"JMXVDDJ 1000"))
     for content, signature in signatures:
         if not content.startswith(signature):
-            raise AssetError(f"arquivo gerado sem assinatura {signature.decode('ascii')}")
+            raise AssetError(f"generated file is missing the {signature.decode('ascii')} signature")
 
     vertex_offset, skin_offset, face_offset = struct.unpack_from("<III", bms, 12)
     for offset in (vertex_offset, skin_offset, face_offset):
         if not 0 < offset < len(bms):
-            raise AssetError("BMS gerado possui offset invalido")
+            raise AssetError("the generated BMS contains an invalid offset")
     if b"DDS " not in ddj[20:24]:
-        raise AssetError("DDJ gerado nao contem DDS")
+        raise AssetError("the generated DDJ does not contain DDS data")
 
 
 def validate_package(bms: bytes, bmt: bytes, bsr: bytes, ddj: bytes) -> None:
@@ -613,7 +642,7 @@ def validate_package(bms: bytes, bmt: bytes, bsr: bytes, ddj: bytes) -> None:
         (bsr, b"JMXVRES 0109"),
     ):
         if not content.startswith(signature):
-            raise AssetError(f"arquivo gerado sem assinatura {signature.decode('ascii')}")
+            raise AssetError(f"generated file is missing the {signature.decode('ascii')} signature")
 
 
 def create_package(
@@ -627,11 +656,11 @@ def create_package(
     internal_base: str = "res\\custom",
 ) -> dict:
     if not obj_path.is_file():
-        raise AssetError("selecione um arquivo OBJ valido")
+        raise AssetError("select a valid OBJ file")
     if not texture_path.is_file():
-        raise AssetError("selecione uma textura PNG, DDS, JPG ou BMP valida")
+        raise AssetError("select a valid PNG, DDS, JPG, or BMP texture")
     if scale <= 0:
-        raise AssetError("a escala precisa ser maior que zero")
+        raise AssetError("scale must be greater than zero")
 
     name = safe_name(asset_name or obj_path.stem)
     material_name = f"{name}_material"
@@ -687,7 +716,7 @@ def create_package(
         files["bsr"].write_bytes(bsr)
         files["ddj"].write_bytes(ddj)
     else:
-        raise AssetError(f"tipo de asset desconhecido: {asset_mode}")
+        raise AssetError(f"unknown asset type: {asset_mode}")
 
     minimum, maximum = bounds(mesh)
     manifest = {
@@ -852,7 +881,7 @@ class App(tk.Tk):
         ).pack(anchor="w")
         tk.Label(
             header,
-            text="Efeitos, props e texturas prontas para o Silkroad",
+            text="Effects, props, textures, and PK2 tools for Silkroad",
             bg=BG,
             fg=MUTED,
             font=("Segoe UI", 11),
@@ -863,22 +892,22 @@ class App(tk.Tk):
         prop_page = tk.Frame(notebook, bg=BG)
         ddj_page = tk.Frame(notebook, bg=BG)
         pk2_page = tk.Frame(notebook, bg=BG)
-        notebook.add(prop_page, text="  EFEITO / PROP  ")
-        notebook.add(ddj_page, text="  TEXTURAS DDJ  ")
-        notebook.add(pk2_page, text="  EXTRAIR PK2  ")
+        notebook.add(prop_page, text="  EFFECT / PROP  ")
+        notebook.add(ddj_page, text="  DDJ TEXTURES  ")
+        notebook.add(pk2_page, text="  EXTRACT PK2  ")
 
         card = tk.Frame(prop_page, bg=PANEL, padx=22, pady=19)
         card.pack(fill="x", pady=(16, 0))
         card.columnconfigure(0, weight=1)
 
-        self.obj_picker = PathPicker(card, "Modelo 3D", "Selecionar OBJ", self.pick_obj)
+        self.obj_picker = PathPicker(card, "3D Model", "Select OBJ", self.pick_obj)
         self.obj_picker.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self.texture_picker = PathPicker(
-            card, "Textura", "Selecionar textura", self.pick_texture
+            card, "Texture", "Select texture", self.pick_texture
         )
         self.texture_picker.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         self.output_picker = PathPicker(
-            card, "Extração (raiz com Data/Media/Particles)", "Selecionar pasta", self.pick_output
+            card, "Extracted root (Data/Media/Particles)", "Select folder", self.pick_output
         )
         self.output_picker.grid(row=2, column=0, sticky="ew")
 
@@ -886,10 +915,10 @@ class App(tk.Tk):
         settings.pack(fill="x", pady=16)
         settings.columnconfigure((0, 1, 2, 3), weight=1, uniform="settings")
 
-        self._field(settings, "NOME DO ASSET", self.name_value).grid(
+        self._field(settings, "ASSET NAME", self.name_value).grid(
             row=0, column=0, sticky="ew", padx=(0, 8)
         )
-        self._field(settings, "ESCALA", self.scale_value).grid(
+        self._field(settings, "SCALE", self.scale_value).grid(
             row=0, column=1, sticky="ew", padx=8
         )
 
@@ -897,7 +926,7 @@ class App(tk.Tk):
         axis_box.grid(row=0, column=2, sticky="nsew", padx=8)
         tk.Label(
             axis_box,
-            text="EIXOS",
+            text="AXIS MODE",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -916,7 +945,7 @@ class App(tk.Tk):
         mode_box.grid(row=0, column=3, sticky="nsew", padx=(8, 0))
         tk.Label(
             mode_box,
-            text="TIPO / DESTINO",
+            text="TYPE / DESTINATION",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -935,7 +964,7 @@ class App(tk.Tk):
         action.pack(fill="x")
         self.generate_button = tk.Button(
             action,
-            text="GERAR PACOTE PARA A SKILL",
+            text="BUILD SKILL PACKAGE",
             command=self.generate,
             bg=GOLD,
             fg="#1c1304",
@@ -950,7 +979,7 @@ class App(tk.Tk):
         self.generate_button.pack(side="left")
         self.open_button = tk.Button(
             action,
-            text="Abrir resultado",
+            text="Open output",
             command=self.open_result,
             state="disabled",
             bg=PANEL_2,
@@ -973,7 +1002,7 @@ class App(tk.Tk):
         result.pack(fill="both", expand=True)
         tk.Label(
             result,
-            text="RESULTADO / CAMINHOS DA SKILL",
+            text="RESULT / SKILL PATHS",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -992,8 +1021,8 @@ class App(tk.Tk):
         )
         self.log.pack(fill="both", expand=True)
         self._set_log(
-            "PROP SKILL grava BMS/DDJ em Particles\\meshes e Particles\\textures.\n"
-            "CUSTOM PROP preserva o pacote BSR/BMT/BMS/DDJ em Data\\res\\custom."
+            "PROP SKILL writes BMS/DDJ to Particles\\meshes and Particles\\textures.\n"
+            "CUSTOM PROP writes a BSR/BMT/BMS/DDJ package to Data\\res\\custom."
         )
         self._build_ddj_page(ddj_page)
         self._build_pk2_page(pk2_page)
@@ -1035,28 +1064,28 @@ class App(tk.Tk):
         ).grid(row=0, column=0, columnspan=3, sticky="w")
         tk.Label(
             controls,
-            text="Converta arquivos individuais ou uma árvore inteira de texturas.",
+            text="Convert individual files or an entire texture folder tree.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 10),
         ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 15))
 
-        self._tool_button(controls, "Selecionar arquivos", self.pick_ddj_files).grid(
+        self._tool_button(controls, "Select files", self.pick_ddj_files).grid(
             row=2, column=0, sticky="w"
         )
-        self._tool_button(controls, "Selecionar pasta", self.pick_ddj_folder).grid(
+        self._tool_button(controls, "Select folder", self.pick_ddj_folder).grid(
             row=2, column=1, sticky="w", padx=10
         )
         ttk.Checkbutton(
             controls,
-            text="Incluir subpastas",
+            text="Include subfolders",
             variable=self.ddj_subfolders,
             style="Silk.TCheckbutton",
         ).grid(row=2, column=2, sticky="w")
 
         tk.Label(
             controls,
-            text="DESTINO (opcional — vazio salva ao lado do original)",
+            text="DESTINATION (optional — leave empty to save beside the source)",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -1070,7 +1099,7 @@ class App(tk.Tk):
             relief="flat",
             font=("Segoe UI", 10),
         ).grid(row=4, column=0, columnspan=2, sticky="ew", ipady=9)
-        self._tool_button(controls, "Escolher destino", self.pick_ddj_output).grid(
+        self._tool_button(controls, "Choose destination", self.pick_ddj_output).grid(
             row=4, column=2, sticky="w", padx=(10, 0)
         )
 
@@ -1078,7 +1107,7 @@ class App(tk.Tk):
         result.pack(fill="both", expand=True)
         tk.Label(
             result,
-            text="SELEÇÃO / RESULTADO",
+            text="SELECTION / RESULT",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -1106,12 +1135,12 @@ class App(tk.Tk):
             actions, "CONVERT FOLDER", self.convert_ddj_folder, CYAN, "#05212b"
         )
         self.ddj_folder_button.pack(side="left", padx=9)
-        self._tool_button(actions, "Abrir resultado", self.open_ddj_output).pack(
+        self._tool_button(actions, "Open output", self.open_ddj_output).pack(
             side="left"
         )
         self.ddj_status = tk.Label(
             actions,
-            text="Nenhuma entrada selecionada",
+            text="No input selected",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -1129,32 +1158,32 @@ class App(tk.Tk):
 
         tk.Label(
             controls,
-            text="EXTRAIR ARQUIVOS PK2",
+            text="EXTRACT PK2 ARCHIVES",
             bg=PANEL,
             fg=TEXT,
             font=("Segoe UI Semibold", 19),
         ).grid(row=0, column=0, columnspan=2, sticky="w")
         tk.Label(
             controls,
-            text="Selecione Data.pk2, Media.pk2, Particles.pk2 ou vários pacotes de uma vez.",
+            text="Select Data.pk2, Media.pk2, Particles.pk2, or multiple archives at once.",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 10),
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 15))
 
-        self._tool_button(controls, "Selecionar PK2", self.pick_pk2_files).grid(
+        self._tool_button(controls, "Select PK2", self.pick_pk2_files).grid(
             row=2, column=0, sticky="w"
         )
         ttk.Checkbutton(
             controls,
-            text="Criar uma pasta para cada PK2",
+            text="Create one folder per PK2",
             variable=self.pk2_separate_folders,
             style="Silk.TCheckbutton",
         ).grid(row=2, column=1, sticky="e")
 
         tk.Label(
             controls,
-            text="PASTA DE DESTINO",
+            text="DESTINATION FOLDER",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -1168,7 +1197,7 @@ class App(tk.Tk):
             relief="flat",
             font=("Segoe UI", 10),
         ).grid(row=4, column=0, sticky="ew", ipady=9)
-        self._tool_button(controls, "Escolher destino", self.pick_pk2_output).grid(
+        self._tool_button(controls, "Choose destination", self.pick_pk2_output).grid(
             row=4, column=1, sticky="e", padx=(10, 0)
         )
 
@@ -1176,7 +1205,7 @@ class App(tk.Tk):
         result.pack(fill="both", expand=True)
         tk.Label(
             result,
-            text="PACOTES / PROGRESSO",
+            text="ARCHIVES / PROGRESS",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI Semibold", 9),
@@ -1197,15 +1226,15 @@ class App(tk.Tk):
         actions = tk.Frame(result, bg=PANEL)
         actions.pack(fill="x")
         self.pk2_extract_button = self._tool_button(
-            actions, "EXTRAIR PACOTES", self.extract_pk2_files, GOLD, "#211604"
+            actions, "EXTRACT ARCHIVES", self.extract_pk2_files, GOLD, "#211604"
         )
         self.pk2_extract_button.pack(side="left")
-        self._tool_button(actions, "Abrir resultado", self.open_pk2_output).pack(
+        self._tool_button(actions, "Open output", self.open_pk2_output).pack(
             side="left", padx=9
         )
         self.pk2_status = tk.Label(
             actions,
-            text="Nenhum PK2 selecionado",
+            text="No PK2 selected",
             bg=PANEL,
             fg=MUTED,
             font=("Segoe UI", 9),
@@ -1224,37 +1253,37 @@ class App(tk.Tk):
 
     def pick_pk2_files(self) -> None:
         values = filedialog.askopenfilenames(
-            title="Selecione os pacotes PK2",
-            filetypes=(("Silkroad PK2", "*.pk2"), ("Todos os arquivos", "*.*")),
+            title="Select PK2 archives",
+            filetypes=(("Silkroad PK2", "*.pk2"), ("All files", "*.*")),
         )
         if values:
             self.pk2_files = [Path(value) for value in values]
             self._set_pk2_log("\n".join(str(path) for path in self.pk2_files))
             self.pk2_status.configure(
-                text=f"{len(self.pk2_files)} pacote(s) selecionado(s)", fg=CYAN
+                text=f"{len(self.pk2_files)} archive(s) selected", fg=CYAN
             )
 
     def pick_pk2_output(self) -> None:
-        value = filedialog.askdirectory(title="Selecione a pasta de destino")
+        value = filedialog.askdirectory(title="Select destination folder")
         if value:
             self.pk2_output.set(value)
 
     def extract_pk2_files(self) -> None:
         if not self.pk2_files:
-            messagebox.showinfo(APP_NAME, "Selecione um ou mais arquivos PK2.")
+            messagebox.showinfo(APP_NAME, "Select one or more PK2 archives.")
             return
         output_text = self.pk2_output.get().strip()
         if not output_text:
-            messagebox.showinfo(APP_NAME, "Escolha uma pasta de destino.")
+            messagebox.showinfo(APP_NAME, "Choose a destination folder.")
             return
 
         output = Path(output_text)
         self.pk2_extract_button.configure(state="disabled")
         self.pk2_progress.configure(value=0, maximum=100)
-        self.pk2_status.configure(text="Lendo os índices PK2...", fg=GOLD)
+        self.pk2_status.configure(text="Reading PK2 indexes...", fg=GOLD)
         self._set_pk2_log(
-            "Preparando a extração. A interface continuará responsiva; "
-            "pacotes grandes podem levar alguns minutos."
+            "Preparing extraction. The interface will remain responsive; "
+            "large archives may take a few minutes."
         )
         threading.Thread(
             target=self._pk2_worker,
@@ -1273,6 +1302,13 @@ class App(tk.Tk):
             try:
                 archive = Pk2Archive(archive_path)
                 entries = archive.entries()
+                server_markers = archive.server_file_markers(entries)
+                if server_markers:
+                    sample = ", ".join(server_markers[:4])
+                    raise AssetError(
+                        "extraction stopped: this client PK2 contains Silkroad server files "
+                        f"({sample}). Replace or repair the source archive first"
+                    )
                 destination = output / archive_path.stem if separate_folders else output
 
                 def progress(done: int, total: int, current: str) -> None:
@@ -1290,7 +1326,7 @@ class App(tk.Tk):
 
                 count, total_bytes = archive.extract(destination, entries, progress)
                 summaries.append(
-                    f"{archive_path.name}: {count:,} arquivos · "
+                    f"{archive_path.name}: {count:,} files · "
                     f"{total_bytes / (1024 ** 2):,.1f} MB"
                 )
             except Exception as exc:
@@ -1311,8 +1347,8 @@ class App(tk.Tk):
             text=f"{archive_name}: {done:,}/{total:,}", fg=GOLD
         )
         self._set_pk2_log(
-            f"Extraindo {archive_name}\n\n"
-            f"Arquivo {done:,} de {total:,}\n{current}"
+            f"Extracting {archive_name}\n\n"
+            f"File {done:,} of {total:,}\n{current}"
         )
 
     def _pk2_complete(
@@ -1322,26 +1358,26 @@ class App(tk.Tk):
         self.last_pk2_output = output if output.exists() else None
         if failures:
             self.pk2_status.configure(
-                text=f"{len(summaries)} pronto(s) · {len(failures)} erro(s)", fg=ERROR
+                text=f"{len(summaries)} complete · {len(failures)} error(s)", fg=ERROR
             )
         else:
             self.pk2_progress.configure(value=100)
             self.pk2_status.configure(
-                text=f"{len(summaries)} pacote(s) extraído(s)", fg=SUCCESS
+                text=f"{len(summaries)} archive(s) extracted", fg=SUCCESS
             )
 
         sections = []
         if summaries:
-            sections.append("PRONTO\n" + "\n".join(summaries))
+            sections.append("COMPLETE\n" + "\n".join(summaries))
         if failures:
-            sections.append("ERROS\n" + "\n".join(failures))
+            sections.append("ERRORS\n" + "\n".join(failures))
         self._set_pk2_log("\n\n".join(sections))
 
     def open_pk2_output(self) -> None:
         if self.last_pk2_output and self.last_pk2_output.exists():
             os.startfile(self.last_pk2_output)
         else:
-            messagebox.showinfo(APP_NAME, "Extraia algum pacote primeiro.")
+            messagebox.showinfo(APP_NAME, "Extract an archive first.")
 
     def _set_ddj_log(self, value: str) -> None:
         self.ddj_log.configure(state="normal")
@@ -1351,34 +1387,34 @@ class App(tk.Tk):
 
     def pick_ddj_files(self) -> None:
         values = filedialog.askopenfilenames(
-            title="Selecione as texturas",
+            title="Select textures",
             filetypes=(
-                ("Texturas", "*.png *.jpg *.jpeg *.bmp *.dds"),
-                ("Todos os arquivos", "*.*"),
+                ("Textures", "*.png *.jpg *.jpeg *.bmp *.dds"),
+                ("All files", "*.*"),
             ),
         )
         if values:
             self.ddj_files = [Path(value) for value in values]
             self._set_ddj_log("\n".join(str(path) for path in self.ddj_files))
             self.ddj_status.configure(
-                text=f"{len(self.ddj_files)} arquivo(s) selecionado(s)", fg=CYAN
+                text=f"{len(self.ddj_files)} file(s) selected", fg=CYAN
             )
 
     def pick_ddj_folder(self) -> None:
-        value = filedialog.askdirectory(title="Selecione a pasta de texturas")
+        value = filedialog.askdirectory(title="Select texture folder")
         if value:
             self.ddj_folder = Path(value)
             self._set_ddj_log(str(self.ddj_folder))
-            self.ddj_status.configure(text="Pasta selecionada", fg=CYAN)
+            self.ddj_status.configure(text="Folder selected", fg=CYAN)
 
     def pick_ddj_output(self) -> None:
-        value = filedialog.askdirectory(title="Selecione a pasta de destino")
+        value = filedialog.askdirectory(title="Select destination folder")
         if value:
             self.ddj_output.set(value)
 
     def convert_ddj_files(self) -> None:
         if not self.ddj_files:
-            messagebox.showinfo(APP_NAME, "Selecione um ou mais arquivos primeiro.")
+            messagebox.showinfo(APP_NAME, "Select one or more files first.")
             return
         destination = Path(self.ddj_output.get()) if self.ddj_output.get().strip() else None
         jobs = [
@@ -1389,7 +1425,7 @@ class App(tk.Tk):
 
     def convert_ddj_folder(self) -> None:
         if not self.ddj_folder:
-            messagebox.showinfo(APP_NAME, "Selecione uma pasta primeiro.")
+            messagebox.showinfo(APP_NAME, "Select a folder first.")
             return
         iterator = (
             self.ddj_folder.rglob("*")
@@ -1402,7 +1438,7 @@ class App(tk.Tk):
             if path.is_file() and path.suffix.lower() in SUPPORTED_TEXTURES
         )
         if not sources:
-            messagebox.showinfo(APP_NAME, "Nenhuma textura suportada foi encontrada.")
+            messagebox.showinfo(APP_NAME, "No supported textures were found.")
             return
 
         destination = Path(self.ddj_output.get()) if self.ddj_output.get().strip() else None
@@ -1419,7 +1455,7 @@ class App(tk.Tk):
         self.ddj_files_button.configure(state="disabled")
         self.ddj_folder_button.configure(state="disabled")
         self.ddj_progress.configure(maximum=len(jobs), value=0)
-        self.ddj_status.configure(text=f"Convertendo 0/{len(jobs)}...", fg=GOLD)
+        self.ddj_status.configure(text=f"Converting 0/{len(jobs)}...", fg=GOLD)
 
         def worker() -> None:
             outputs: list[Path] = []
@@ -1427,7 +1463,7 @@ class App(tk.Tk):
             for index, (source, target) in enumerate(jobs, 1):
                 try:
                     if source.suffix.lower() not in SUPPORTED_TEXTURES:
-                        raise AssetError(f"formato não suportado: {source.suffix}")
+                        raise AssetError(f"unsupported format: {source.suffix}")
                     content, _ = build_ddj(source)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(content)
@@ -1441,7 +1477,7 @@ class App(tk.Tk):
 
     def _ddj_progress(self, completed: int, total: int) -> None:
         self.ddj_progress.configure(value=completed)
-        self.ddj_status.configure(text=f"Convertendo {completed}/{total}...", fg=GOLD)
+        self.ddj_status.configure(text=f"Converting {completed}/{total}...", fg=GOLD)
 
     def _ddj_complete(self, outputs: list[Path], failures: list[str]) -> None:
         self.ddj_files_button.configure(state="normal")
@@ -1450,18 +1486,18 @@ class App(tk.Tk):
             self.last_ddj_output = outputs[0].parent
         if failures:
             self.ddj_status.configure(
-                text=f"{len(outputs)} pronto(s) · {len(failures)} erro(s)", fg=ERROR
+                text=f"{len(outputs)} complete · {len(failures)} error(s)", fg=ERROR
             )
-            self._set_ddj_log("ERROS\n" + "\n".join(failures))
+            self._set_ddj_log("ERRORS\n" + "\n".join(failures))
         else:
-            self.ddj_status.configure(text=f"{len(outputs)} DDJ criado(s)", fg=SUCCESS)
-            self._set_ddj_log("PRONTO\n" + "\n".join(str(path) for path in outputs))
+            self.ddj_status.configure(text=f"{len(outputs)} DDJ file(s) created", fg=SUCCESS)
+            self._set_ddj_log("COMPLETE\n" + "\n".join(str(path) for path in outputs))
 
     def open_ddj_output(self) -> None:
         if self.last_ddj_output and self.last_ddj_output.exists():
             os.startfile(self.last_ddj_output)
         else:
-            messagebox.showinfo(APP_NAME, "Converta alguma textura primeiro.")
+            messagebox.showinfo(APP_NAME, "Convert a texture first.")
 
     def _field(self, master, label: str, variable: tk.StringVar) -> tk.Frame:
         frame = tk.Frame(master, bg=PANEL, padx=14, pady=12)
@@ -1485,7 +1521,7 @@ class App(tk.Tk):
 
     def pick_obj(self) -> None:
         value = filedialog.askopenfilename(
-            title="Selecione o modelo OBJ", filetypes=(("Wavefront OBJ", "*.obj"),)
+            title="Select OBJ model", filetypes=(("Wavefront OBJ", "*.obj"),)
         )
         if value:
             self.obj_picker.value.set(value)
@@ -1494,17 +1530,17 @@ class App(tk.Tk):
 
     def pick_texture(self) -> None:
         value = filedialog.askopenfilename(
-            title="Selecione a textura",
+            title="Select texture",
             filetypes=(
-                ("Texturas", "*.png *.dds *.jpg *.jpeg *.bmp"),
-                ("Todos os arquivos", "*.*"),
+                ("Textures", "*.png *.dds *.jpg *.jpeg *.bmp"),
+                ("All files", "*.*"),
             ),
         )
         if value:
             self.texture_picker.value.set(value)
 
     def pick_output(self) -> None:
-        value = filedialog.askdirectory(title="Selecione a raiz extraída do PK2")
+        value = filedialog.askdirectory(title="Select extracted PK2 root")
         if value:
             self.output_picker.value.set(value)
 
@@ -1520,7 +1556,7 @@ class App(tk.Tk):
         try:
             scale = float(self.scale_value.get().replace(",", "."))
         except ValueError:
-            messagebox.showerror(APP_NAME, "Escala invalida.")
+            messagebox.showerror(APP_NAME, "Invalid scale.")
             return
         values = (
             Path(self.obj_picker.value.get()),
@@ -1534,7 +1570,7 @@ class App(tk.Tk):
         self.generate_button.configure(state="disabled")
         self.open_button.configure(state="disabled")
         self.progress.start(10)
-        self._set_log("Gerando e validando o pacote...", GOLD)
+        self._set_log("Building and validating package...", GOLD)
         threading.Thread(target=self._worker, args=values, daemon=True).start()
 
     def _worker(self, *values) -> None:
@@ -1548,7 +1584,7 @@ class App(tk.Tk):
     def _failed(self, error: str) -> None:
         self.progress.stop()
         self.generate_button.configure(state="normal")
-        self._set_log(f"ERRO\n{error}", ERROR)
+        self._set_log(f"ERROR\n{error}", ERROR)
         messagebox.showerror(APP_NAME, error)
 
     def _complete(self, result: dict) -> None:
@@ -1560,19 +1596,19 @@ class App(tk.Tk):
         paths = result["paths"]
         if paths["resource"]:
             details = (
-                f"CUSTOM PROP / RECURSO (BSR)\n{paths['resource']}\n\n"
-                f"MALHA (BMS)\n{paths['mesh']}\n\n"
+                f"CUSTOM PROP / RESOURCE (BSR)\n{paths['resource']}\n\n"
+                f"MESH (BMS)\n{paths['mesh']}\n\n"
                 f"MATERIAL\n{paths['material']}\n\n"
-                f"TEXTURA\n{paths['texture']}"
+                f"TEXTURE\n{paths['texture']}"
             )
         else:
             details = (
-                f"PROP SKILL / MALHA DIRETA NO EFP\n{paths['mesh']}\n\n"
-                f"TEXTURA DIRETA NO EFP\n{paths['texture']}\n\n"
-                "Clone um nó RenderMesh/Shape no EFP e troque esses dois caminhos."
+                f"PROP SKILL / DIRECT EFP MESH\n{paths['mesh']}\n\n"
+                f"DIRECT EFP TEXTURE\n{paths['texture']}\n\n"
+                "Clone a RenderMesh/Shape node in the EFP and replace these two paths."
             )
         self._set_log(
-            f"PRONTO · {mesh.vertex_count} vértices · {mesh.face_count} faces\n\n{details}",
+            f"COMPLETE · {mesh.vertex_count} vertices · {mesh.face_count} faces\n\n{details}",
             SUCCESS,
         )
 
@@ -1599,7 +1635,7 @@ def main() -> None:
     args = parse_args()
     if args.obj or args.texture or args.output:
         if not (args.obj and args.texture and args.output):
-            raise SystemExit("--obj, --texture e --output devem ser usados juntos")
+            raise SystemExit("--obj, --texture, and --output must be used together")
         result = create_package(
             args.obj,
             args.texture,
